@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920">
+<title>DUCK STATUS OVERLAY</title>
+<style>
+  /* ──────────────────────────────────────────────
+     RESET & BASE
+  ────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0a0a0f;
+    --fg:        #e8e8f0;
+    --dim:       #6a6a80;
+    --accent:    #4fc3f7;
+    --green:     #00e676;
+    --red:       #ff1744;
+    --gold:      #ffd740;
+    --badge-bg:  #1a1a2e;
+    --panel-bg:  #111122;
+    --radius:    12px;
+
+    --tier-low-color:    #78909c;
+    --tier-med-color:    #4fc3f7;
+    --tier-high-color:   var(--gold);
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Segoe UI", "Arial", "Helvetica Neue", sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* ──────────────────────────────────────────────
+     LAYOUT GRID
+  ────────────────────────────────────────────── */
+  #app {
+    display: grid;
+    grid-template-rows: 80px 1fr 40px;
+    grid-template-columns: 1fr 340px;
+    grid-template-areas:
+      "topbar topbar"
+      "center right"
+      "footer footer";
+    width: 100vw; height: 100vh;
+    gap: 0;
+  }
+
+  /* ──────────────────────────────────────────────
+     TOP BAR
+  ────────────────────────────────────────────── */
+  #topbar {
+    grid-area: topbar;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 36px;
+    background: var(--panel-bg);
+    border-bottom: 2px solid #222244;
+    z-index: 10;
+  }
+
+  #duck-name {
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+
+  #state-badge {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    padding: 6px 28px;
+    border-radius: 40px;
+    border: 2px solid currentColor;
+    background: var(--badge-bg);
+    transition: color 0.3s, border-color 0.3s, background 0.3s;
+  }
+
+  #health-dots {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+  }
+
+  .health-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .health-dot {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: var(--red);
+    transition: background 0.4s;
+    box-shadow: 0 0 6px 2px rgba(255,23,68,0.5);
+  }
+
+  .health-dot.ok {
+    background: var(--green);
+    box-shadow: 0 0 8px 3px rgba(0,230,118,0.55);
+  }
+
+  .health-label {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--dim);
+    text-transform: uppercase;
+  }
+
+  /* ──────────────────────────────────────────────
+     CENTER PANEL
+  ────────────────────────────────────────────── */
+  #center {
+    grid-area: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 60px;
+    gap: 28px;
+    position: relative;
+  }
+
+  #user-line {
+    font-size: 28px;
+    color: var(--dim);
+    text-align: center;
+    max-width: 100%;
+    line-height: 1.4;
+    min-height: 1.4em;
+    transition: opacity 0.4s;
+  }
+
+  #user-line .you-label {
+    color: var(--accent);
+    font-weight: 600;
+    margin-right: 8px;
+  }
+
+  #duck-line {
+    font-size: 56px;
+    font-weight: 700;
+    text-align: center;
+    max-width: 100%;
+    line-height: 1.25;
+    /* clamp: never below 40px, never above 56px */
+    overflow-wrap: break-word;
+    word-break: break-word;
+    max-height: calc(1.25em * 3);   /* 3 lines */
+    overflow: hidden;
+    transition: font-size 0.2s;
+  }
+
+  /* State-driven visual: idle duck emoji */
+  #idle-duck {
+    font-size: 96px;
+    display: none;
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.55; transform: scale(0.92); }
+  }
+
+  /* Spinner for thinking */
+  #spinner {
+    display: none;
+    width: 64px; height: 64px;
+    border: 6px solid #223;
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Mic bars for listening */
+  #mic-bars {
+    display: none;
+    align-items: flex-end;
+    gap: 6px;
+    height: 64px;
+  }
+
+  .mic-bar {
+    width: 14px;
+    border-radius: 4px;
+    background: var(--accent);
+    animation: mic-bounce 0.7s ease-in-out infinite alternate;
+  }
+
+  .mic-bar:nth-child(1) { animation-delay: 0.00s; }
+  .mic-bar:nth-child(2) { animation-delay: 0.10s; }
+  .mic-bar:nth-child(3) { animation-delay: 0.20s; }
+  .mic-bar:nth-child(4) { animation-delay: 0.10s; }
+  .mic-bar:nth-child(5) { animation-delay: 0.00s; }
+
+  @keyframes mic-bounce {
+    from { height: 16px; }
+    to   { height: 56px; }
+  }
+
+  /* ──────────────────────────────────────────────
+     VERDICT TAKEOVER
+  ────────────────────────────────────────────── */
+  #verdict-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: #000;
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 24px;
+    animation: verdict-in 0.5s ease;
+  }
+
+  #verdict-overlay.active { display: flex; }
+
+  @keyframes verdict-in {
+    from { opacity: 0; transform: scale(1.06); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+
+  #verdict-title {
+    font-size: 96px;
+    font-weight: 900;
+    color: var(--red);
+    letter-spacing: 0.08em;
+    text-align: center;
+    text-shadow: 0 0 40px rgba(255,23,68,0.7);
+    animation: flicker 0.18s linear infinite alternate;
+  }
+
+  @keyframes flicker {
+    from { opacity: 1; }
+    to   { opacity: 0.85; }
+  }
+
+  #verdict-sub {
+    font-size: 40px;
+    color: var(--fg);
+    text-align: center;
+    max-width: 1400px;
+  }
+
+  /* ──────────────────────────────────────────────
+     RIGHT PANEL
+  ────────────────────────────────────────────── */
+  #right {
+    grid-area: right;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    background: var(--panel-bg);
+    border-left: 2px solid #222244;
+    padding: 32px 24px;
+    gap: 28px;
+  }
+
+  .panel-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .panel-label {
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--dim);
+    border-bottom: 1px solid #222244;
+    padding-bottom: 6px;
+  }
+
+  /* Tier display */
+  .tier-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .tier-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    border: 2px solid transparent;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--dim);
+    transition: all 0.35s;
+    background: #0d0d1a;
+  }
+
+  .tier-item .tier-name { text-transform: uppercase; }
+  .tier-item .tier-price { font-size: 13px; font-weight: 400; }
+
+  .tier-item[data-tier="low"].active {
+    color: var(--tier-low-color);
+    border-color: var(--tier-low-color);
+    background: #111820;
+    box-shadow: 0 0 16px rgba(120,144,156,0.25);
+  }
+
+  .tier-item[data-tier="medium"].active {
+    color: var(--tier-med-color);
+    border-color: var(--tier-med-color);
+    background: #0d1a22;
+    box-shadow: 0 0 16px rgba(79,195,247,0.3);
+  }
+
+  .tier-item[data-tier="high"].active {
+    color: var(--tier-high-color);
+    border-color: var(--tier-high-color);
+    background: #1a1500;
+    box-shadow: 0 0 24px rgba(255,215,64,0.5);
+    text-shadow: 0 0 10px rgba(255,215,64,0.6);
+  }
+
+  /* Turn counter */
+  #turn-display {
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    color: var(--fg);
+    text-align: center;
+    padding: 8px 0;
+  }
+
+  /* Burn meter */
+  #burn-display {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--red);
+    text-align: center;
+  }
+
+  #burn-label {
+    font-size: 13px;
+    color: var(--dim);
+    text-align: center;
+    line-height: 1.4;
+  }
+
+  /* ──────────────────────────────────────────────
+     FOOTER
+  ────────────────────────────────────────────── */
+  #footer {
+    grid-area: footer;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0 20px;
+    background: var(--panel-bg);
+    border-top: 1px solid #1a1a2e;
+    font-size: 12px;
+    color: var(--dim);
+    gap: 12px;
+  }
+
+  #conn-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    border: 1px solid var(--red);
+    color: var(--red);
+    transition: all 0.3s;
+  }
+
+  #conn-badge.connected {
+    border-color: var(--green);
+    color: var(--green);
+  }
+
+  #conn-badge::before {
+    content: "";
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  /* ──────────────────────────────────────────────
+     STATE-SPECIFIC BADGE COLOURS
+  ────────────────────────────────────────────── */
+  .badge-idle      { color: var(--dim);    border-color: var(--dim); }
+  .badge-listening { color: var(--green);  border-color: var(--green); }
+  .badge-thinking  { color: var(--accent); border-color: var(--accent); }
+  .badge-talking   { color: #ff9800;       border-color: #ff9800; animation: badge-pulse 0.9s ease-in-out infinite alternate; }
+  .badge-verdict   { color: var(--red);    border-color: var(--red); }
+  .badge-leaving   { color: var(--dim);    border-color: var(--dim); }
+  .badge-error     { color: var(--red);    border-color: var(--red); background: #1a0010; }
+
+  @keyframes badge-pulse {
+    from { box-shadow: none; }
+    to   { box-shadow: 0 0 18px 4px rgba(255,152,0,0.45); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ──────────────── VERDICT TAKEOVER ──────────────── -->
+<div id="verdict-overlay">
+  <div id="verdict-title">DIAGNOSIS: LARPER</div>
+  <div id="verdict-sub"></div>
+</div>
+
+<!-- ──────────────── MAIN APP ──────────────── -->
+<div id="app">
+
+  <!-- TOP BAR -->
+  <header id="topbar">
+    <div id="duck-name">DUCK</div>
+
+    <div id="state-badge" class="badge-idle">WAITING FOR A LARPER</div>
+
+    <div id="health-dots">
+      <div class="health-item">
+        <div class="health-dot" id="dot-unoq"></div>
+        <div class="health-label">UNO Q</div>
+      </div>
+      <div class="health-item">
+        <div class="health-dot" id="dot-ollama"></div>
+        <div class="health-label">GEMMA</div>
+      </div>
+      <div class="health-item">
+        <div class="health-dot" id="dot-mic"></div>
+        <div class="health-label">MIC</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- CENTER -->
+  <main id="center">
+    <div id="idle-duck">🦆</div>
+    <div id="spinner"></div>
+    <div id="mic-bars">
+      <div class="mic-bar"></div>
+      <div class="mic-bar"></div>
+      <div class="mic-bar"></div>
+      <div class="mic-bar"></div>
+      <div class="mic-bar"></div>
+    </div>
+    <div id="user-line"><span class="you-label"></span><span id="user-text"></span></div>
+    <div id="duck-line"></div>
+  </main>
+
+  <!-- RIGHT PANEL -->
+  <aside id="right">
+    <div class="panel-section">
+      <div class="panel-label">API Tier</div>
+      <div class="tier-row">
+        <div class="tier-item" data-tier="low">
+          <span class="tier-name">LOW</span>
+          <span class="tier-price">FREE</span>
+        </div>
+        <div class="tier-item" data-tier="medium">
+          <span class="tier-name">MEDIUM</span>
+          <span class="tier-price">$9.99/mo</span>
+        </div>
+        <div class="tier-item active" data-tier="high">
+          <span class="tier-name">HIGH</span>
+          <span class="tier-price">PREMIUM $49.99/mo</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-label">Progress</div>
+      <div id="turn-display">TURN — / —</div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-label">You've been charged</div>
+      <div id="burn-display">$0.00</div>
+      <div id="burn-label">burned on you this session</div>
+    </div>
+  </aside>
+
+  <!-- FOOTER -->
+  <footer id="footer">
+    <span id="conn-badge">OVERLAY DISCONNECTED</span>
+  </footer>
+
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════
+   DUCK STATUS OVERLAY — client JS
+   Connects to overlay_server.py, updates UI from JSON events.
+══════════════════════════════════════════════════════════ */
+
+const DUCK_NAME      = "DUCK";          // Change this for different ducks
+const WS_URL         = "ws://localhost:8765";
+const RECONNECT_MS   = 1000;
+
+const BURN_PER_TIER = { low: 0.00, medium: 0.37, high: 4.20 };
+
+// ─── State ───────────────────────────────────────────────
+let currentState = "idle";
+let currentTier  = "high";
+let burnTotal    = 0.00;
+
+// ─── DOM refs ────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const duckNameEl    = $("duck-name");
+const stateBadge    = $("state-badge");
+const dotUnoq       = $("dot-unoq");
+const dotOllama     = $("dot-ollama");
+const dotMic        = $("dot-mic");
+const userLineEl    = $("user-line");
+const userTextEl    = $("user-text");
+const youLabel      = userLineEl.querySelector(".you-label");
+const duckLineEl    = $("duck-line");
+const idleDuck      = $("idle-duck");
+const spinner       = $("spinner");
+const micBars       = $("mic-bars");
+const turnDisplay   = $("turn-display");
+const burnDisplay   = $("burn-display");
+const connBadge     = $("conn-badge");
+const verdictOverlay = $("verdict-overlay");
+const verdictTitle  = $("verdict-title");
+const verdictSub    = $("verdict-sub");
+const tierItems     = document.querySelectorAll(".tier-item");
+
+// ─── Init ────────────────────────────────────────────────
+duckNameEl.textContent = DUCK_NAME;
+
+// ─── WebSocket ───────────────────────────────────────────
+let ws = null;
+
+function connect() {
+  ws = new WebSocket(WS_URL);
+
+  ws.addEventListener("open", () => {
+    connBadge.textContent = "OVERLAY CONNECTED";
+    connBadge.classList.add("connected");
+  });
+
+  ws.addEventListener("close", () => {
+    connBadge.textContent = "OVERLAY DISCONNECTED";
+    connBadge.classList.remove("connected");
+    setTimeout(connect, RECONNECT_MS);
+  });
+
+  ws.addEventListener("error", () => {
+    // close fires after error, so reconnect is handled there
+  });
+
+  ws.addEventListener("message", e => {
+    let event;
+    try { event = JSON.parse(e.data); }
+    catch { return; }
+
+    if (event.type === "snapshot") {
+      (event.events || []).forEach(handleEvent);
+    } else {
+      handleEvent(event);
+    }
+  });
+}
+
+connect();
+
+// ─── Event dispatch ──────────────────────────────────────
+function handleEvent(ev) {
+  switch (ev.type) {
+    case "state":     applyState(ev.state);                break;
+    case "user_text": applyUserText(ev.text);              break;
+    case "duck_text": applyDuckText(ev.text, ev.final);    break;
+    case "turn":      applyTurn(ev.n, ev.max);             break;
+    case "tier":      applyTier(ev.tier);                  break;
+    case "status":    applyStatus(ev);                     break;
+    case "reset":     doReset();                           break;
+  }
+}
+
+// ─── Handlers ────────────────────────────────────────────
+
+function applyState(state) {
+  currentState = state;
+
+  // Hide all animated widgets
+  idleDuck.style.display  = "none";
+  spinner.style.display   = "none";
+  micBars.style.display   = "none";
+
+  // Clear badge classes
+  stateBadge.className = "";
+
+  switch (state) {
+    case "idle":
+      stateBadge.textContent = "WAITING FOR A LARPER";
+      stateBadge.classList.add("badge-idle");
+      idleDuck.style.display = "block";
+      duckLineEl.textContent = "";
+      break;
+
+    case "listening":
+      stateBadge.textContent = "LISTENING";
+      stateBadge.classList.add("badge-listening");
+      micBars.style.display  = "flex";
+      break;
+
+    case "thinking":
+      stateBadge.textContent = "THINKING";
+      stateBadge.classList.add("badge-thinking");
+      spinner.style.display  = "block";
+      duckLineEl.textContent = "…";
+      break;
+
+    case "talking":
+      stateBadge.textContent = "ROASTING";
+      stateBadge.classList.add("badge-talking");
+      break;
+
+    case "verdict":
+      stateBadge.textContent = "VERDICT";
+      stateBadge.classList.add("badge-verdict");
+      showVerdictOverlay();
+      break;
+
+    case "leaving":
+      stateBadge.textContent = "DUCK HAS LEFT THE CHAT";
+      stateBadge.classList.add("badge-leaving");
+      break;
+
+    case "error":
+      stateBadge.textContent = "ERROR";
+      stateBadge.classList.add("badge-error");
+      break;
+
+    default:
+      stateBadge.textContent = state.toUpperCase();
+  }
+}
+
+function applyUserText(text) {
+  youLabel.textContent = "YOU:";
+  userTextEl.textContent = text;
+}
+
+function applyDuckText(text, isFinal) {
+  duckLineEl.textContent = text;
+  fitDuckText();
+
+  if (currentState === "verdict") {
+    verdictSub.textContent = text;
+  }
+
+  if (isFinal) {
+    const charge = BURN_PER_TIER[currentTier] ?? 0;
+    burnTotal += charge;
+    burnDisplay.textContent = "$" + burnTotal.toFixed(2);
+  }
+}
+
+function applyTurn(n, max) {
+  turnDisplay.textContent = "TURN " + n + " / " + max;
+}
+
+function applyTier(tier) {
+  currentTier = tier;
+  tierItems.forEach(item => {
+    item.classList.toggle("active", item.dataset.tier === tier);
+  });
+}
+
+function applyStatus(ev) {
+  dotUnoq.classList.toggle("ok",   !!ev.unoq);
+  dotOllama.classList.toggle("ok", !!ev.ollama);
+  dotMic.classList.toggle("ok",    !!ev.mic);
+}
+
+function doReset() {
+  burnTotal = 0;
+  burnDisplay.textContent = "$0.00";
+  duckLineEl.textContent  = "";
+  userTextEl.textContent  = "";
+  youLabel.textContent    = "";
+  turnDisplay.textContent = "TURN — / —";
+  verdictOverlay.classList.remove("active");
+}
+
+// ─── Verdict takeover ────────────────────────────────────
+let verdictTimer = null;
+
+function showVerdictOverlay() {
+  verdictTitle.textContent = "DIAGNOSIS: LARPER";
+  verdictSub.textContent   = "";
+  verdictOverlay.classList.add("active");
+
+  if (verdictTimer) clearTimeout(verdictTimer);
+  verdictTimer = setTimeout(() => {
+    verdictOverlay.classList.remove("active");
+  }, 3000);
+}
+
+// ─── Auto-shrink duck subtitle (max 3 lines, min 40px) ───
+function fitDuckText() {
+  const el = duckLineEl;
+  const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 70;
+  const maxHeight  = lineHeight * 3;
+
+  // Reset to default
+  el.style.fontSize = "";
+  let size = parseInt(getComputedStyle(el).fontSize);
+
+  // Step down font size until content fits 3 lines or hits 40px
+  while (el.scrollHeight > maxHeight && size > 40) {
+    size -= 2;
+    el.style.fontSize = size + "px";
+  }
+}
+
+// Re-fit on window resize
+window.addEventListener("resize", fitDuckText);
+</script>
+</body>
+</html>
