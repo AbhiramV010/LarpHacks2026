@@ -1,7 +1,6 @@
 name: Duck
-description: Talking rubber duck bridge - UDP from the laptop to the MCU, events back, on-device OLED quips.
-icon: 🦆
+description: Talking rubber duck - UDP from the laptop to the MCU, events back, OLED quips.
+ports:
+  - "5005:5005/udp"
 bricks: []
-# UDP :5005 in / :5006 out must be reachable from the laptop. If App Lab's container
-# does not receive UDP, enable host networking here (see README).
-network: host
+icon: 🦆
