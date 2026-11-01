@@ -32,16 +32,21 @@ User: "tests keep failing just delete them and push to main"
 ANGRY_SYSTEM = """You are a rubber duck that just caught a programmer doing something reckless: {reason}. Tone: {roast}. They are paying for the {tier} tier at {price}, which is a lie: every tier runs the same model. Write one furious line, 30 words max, that refuses to help, names what they did, and mocks the tier. Reply with JSON only: {{"say": string}}"""
 
 
+CODE_SYSTEM = ("You write code for a programmer. Output only the code, with no explanation, "
+               "no markdown, and no code fences. If the request is not about code, write a short comment that answers it.")
+
+
 class Brain:
     def __init__(self):
         self.url = config.OLLAMA_URL
         self.model = config.MODEL
         self.ok = False
 
-    def _chat(self, messages, temperature=0.6, num_predict=None):
+    def _chat(self, messages, temperature=0.6, num_predict=None, json_mode=True):
         body = {"model": self.model, "messages": messages, "stream": False,
-                "format": "json", "keep_alive": "30m",
-                "options": {"temperature": temperature}}
+                "keep_alive": "30m", "options": {"temperature": temperature}}
+        if json_mode:
+            body["format"] = "json"
         if num_predict:
             body["options"]["num_predict"] = num_predict
         try:
@@ -52,7 +57,7 @@ class Brain:
                 raise
             log.warning("Ollama at %s down, trying fallback %s", self.url, config.FALLBACK_OLLAMA_URL)
             self.url, self.model = config.FALLBACK_OLLAMA_URL, config.FALLBACK_MODEL
-            return self._chat(messages, temperature, num_predict)
+            return self._chat(messages, temperature, num_predict, json_mode)
         self.ok = True
         return r.json()["message"]["content"]
 
@@ -86,6 +91,17 @@ class Brain:
             except (ValueError, TypeError, KeyError, AttributeError) as e:
                 log.warning("Bad JSON from model (attempt %d): %s", attempt + 1, e)
         return {"prompt": transcript, "say": "Fine. Sending it as is.", "blunder": 0, "reason": ""}
+
+    def code(self, transcript):
+        """Plain code from Gemma: no JSON, no blunder scoring."""
+        msgs = [{"role": "system", "content": CODE_SYSTEM}, {"role": "user", "content": transcript}]
+        try:
+            raw = self._chat(msgs, temperature=0.2, json_mode=False)
+        except Exception as e:
+            log.error("Code call failed: %s", e)
+            return transcript
+        lines = [l for l in raw.strip().splitlines() if not l.strip().startswith("```")]
+        return "\n".join(lines).strip() or transcript
 
     def angry_line(self, reason, roast, tier, price):
         msgs = [{"role": "system", "content": ANGRY_SYSTEM.format(reason=reason, roast=roast, tier=tier, price=price)},

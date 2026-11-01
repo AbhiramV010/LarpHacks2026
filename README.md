@@ -1,4 +1,4 @@
-# QUACKSWORTH
+# QUACK OVERFLOW
 
 A rubber duck that listens while you think out loud, rewrites your ramble as a clear prompt for Claude, says a line, and types the prompt into the window that has focus. Built for LarpHacks 2026 by Abhiram Vadali and Mridul Goel.
 

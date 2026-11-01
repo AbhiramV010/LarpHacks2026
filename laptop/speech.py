@@ -36,12 +36,23 @@ class Listener:
         self._recalibrate = threading.Event()
         self._frames = queue.Queue()
         self._recalibrate.set()         # calibrate on startup
+        self._ptt = threading.Event()   # held push-to-talk key
+        self._ptt_buf = []
+        self._ptt_released = False
 
     def start(self):
         threading.Thread(target=self._run, daemon=True).start()
 
     def recalibrate(self):
         self._recalibrate.set()
+
+    def ptt_press(self):
+        self._ptt_buf = []
+        self._ptt.set()
+
+    def ptt_release(self):
+        self._ptt.clear()
+        self._ptt_released = True
 
     def _callback(self, indata, frames, t, status):
         self._frames.put(indata[:, 0].copy())
@@ -80,6 +91,15 @@ class Listener:
                 self.on_level(rms, self.threshold)
                 last_level = now
 
+            if self._ptt.is_set():        # held key: record everything, no VAD
+                self._ptt_buf.append(frame)
+                continue
+            if self._ptt_released:
+                self._ptt_released = False
+                audio = np.concatenate(self._ptt_buf) if self._ptt_buf else np.zeros(0, np.float32)
+                self._ptt_buf = []
+                self.events.put(("audio", audio) if len(audio) / RATE >= 0.6 else ("cancel", None))
+                continue
             if self.is_muted():           # self-hearing guard: drop everything
                 pre.clear()
                 speaking, above, below, chunk = False, 0, 0, []

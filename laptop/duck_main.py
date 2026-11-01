@@ -4,6 +4,7 @@ import difflib
 import json
 import logging
 import queue
+import subprocess
 import threading
 import time
 
@@ -91,6 +92,7 @@ class Duck:
         self.speaking = False        # duck audio is playing
         self.mute_until = 0.0        # self-hearing guard end time
         self.work = queue.Queue()    # reset requests from F8 / button, drained by the main loop
+        self.space_down = False
         self.busy = threading.Lock()
         self.stt = STT()
         self.listener = Listener(self.muted, self.on_level)
@@ -151,7 +153,7 @@ class Duck:
 
     # ---- pipeline ----
     def process(self, audio):
-        """Runs in a worker thread. Only called when the state is LISTENING."""
+        """Runs in a worker thread. The transcript goes straight to Gemma; the code is typed into Notepad."""
         self.set_state("translating")
         text = self.stt.transcribe(audio)
         if config.WAKE_WORD:
@@ -161,36 +163,12 @@ class Duck:
             self.set_state("idle")
             return
         self.overlay.send("heard", text=text)
-        _, tier, price, roast, single, total = self.locked
-        r = self.brain.ask(text, roast, self.history)
-        self.send_health()
-        log.info("Brain: %s", r)
-        self.history = (self.history + [{"transcript": text, "result": r}])[-2:]
-        self.total_blunder += r["blunder"]
-        self.burn += BURN[tier]
-        self.overlay.send("burn", amount=round(self.burn, 2))
-        self.send_patience()
-        self.overlay.send("prompt", text=r["prompt"])
-
-        if r["blunder"] >= single or self.total_blunder >= total:
-            reason = r["reason"] or "being reckless"
-            self.set_state("angry")
-            self.link.send("ANGER")
-            self.overlay.send("angry", reason=reason)
-            line = self.brain.angry_line(reason, roast, tier, price)
-            self.overlay.send("say", text=line)
-            self.speak(line)
-            return  # stays angry until F8 or the button
-
-        self.link.send("PAN 90")
-        self.set_state("talking")
-        self.overlay.send("say", text=r["say"])
-        self.speak(r["say"])
-        if self.state != "talking":
-            return  # killed by F10
-        self.link.send("PAN 0")
+        code = self.brain.code(text)
+        self.overlay.send("prompt", text=code[:2000])
+        subprocess.Popen('cmd /c start "" notepad', shell=True)
+        time.sleep(1.5)  # let Notepad take focus
         self.set_state("typing")
-        done = typer.type_prompt(r["prompt"], on_typing=lambda on: self.link.send(f"TYPING {int(on)}"))
+        done = typer.type_prompt(code, on_typing=lambda on: self.link.send(f"TYPING {int(on)}"), code=True)
         self._end_audio()
         if done:
             self.set_state("waiting")
@@ -233,7 +211,16 @@ class Duck:
                 self.work.put("reset")
             elif k == keyboard.Key.f10:
                 self.kill()
-        keyboard.Listener(on_press=on_press).start()
+            elif k == keyboard.Key.space and not self.space_down and self.state == "idle" and not self.muted():
+                self.space_down = True
+                self.listener.ptt_press()
+                self.set_state("listening")
+
+        def on_release(k):
+            if k == keyboard.Key.space and self.space_down:
+                self.space_down = False
+                self.listener.ptt_release()
+        keyboard.Listener(on_press=on_press, on_release=on_release).start()
 
     def run(self):
         self.hotkeys()

@@ -10,7 +10,7 @@ WHISPER_MODEL = "base.en"
 # TTS: ElevenLabs when ELEVENLABS_API_KEY is set and reachable, else the Windows SAPI voice.
 ELEVENLABS_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"   # "George"; swap for any voice id
 ELEVENLABS_MODEL = "eleven_flash_v2_5"
-DUCK_NAME = "QUACKSWORTH"
+DUCK_NAME = "QUACK OVERFLOW"
 WAKE_WORD = None                 # set to "hey duck" to only act on transcripts starting with it
 SUBMIT = True                  # press Enter after typing the prompt
 TYPE_DELAY_S = 0.015
