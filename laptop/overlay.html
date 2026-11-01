@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Duck Overlay</title>
+<style>
+  :root {
+    --bg: #0b0d12; --panel: #151924; --line: #2a3142; --fg: #f2f4f8; --dim: #8b93a7;
+    --accent: #ffd400; --green: #35e07a; --red: #ff3b3b; --blue: #4aa3ff; --gold: #ffc53d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { background: var(--bg); overflow: hidden; }
+  body { width: 1920px; height: 1080px; overflow: hidden; background: var(--bg); transform-origin: 0 0; color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { display: grid; grid-template-rows: 90px 1fr 160px; grid-template-columns: 1fr 460px;
+    gap: 24px; padding: 24px; }
+  #top { grid-column: 1 / 3; display: flex; align-items: center; gap: 32px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 16px; padding: 0 32px; }
+  #name { font-size: 40px; font-weight: 800; letter-spacing: 4px; color: var(--accent); }
+  #state { font-size: 28px; font-weight: 700; padding: 8px 24px; border-radius: 999px; background: #2a3142;
+    letter-spacing: 2px; }
+  #state[data-s="listening"] { background: #1348a0; } #state[data-s="translating"] { background: #5a1fa0; }
+  #state[data-s="typing"] { background: #0f7a3c; } #state[data-s="waiting"] { background: #8a5a00; }
+  #state[data-s="talking"] { background: #0a7f8a; } #state[data-s="angry"] { background: #a01010; }
+  #health { margin-left: auto; display: flex; gap: 28px; font-size: 22px; color: var(--dim); }
+  .dot { display: inline-block; width: 18px; height: 18px; border-radius: 50%; background: var(--red);
+    margin-right: 10px; vertical-align: -2px; box-shadow: 0 0 10px var(--red); }
+  .dot.ok { background: var(--green); box-shadow: 0 0 10px var(--green); }
+  #main { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 28px;
+    display: flex; flex-direction: column; min-height: 0; }
+  .panel h2 { font-size: 22px; letter-spacing: 4px; color: var(--dim); margin-bottom: 18px; }
+  .panel .text { font-size: 38px; line-height: 1.3; overflow: hidden; flex: 1; }
+  #heard .text { color: #c8cdd9; font-style: italic; }
+  #prompt .text { color: var(--fg); font-weight: 600; }
+  #say { grid-column: 1 / 3; display: flex; align-items: center; justify-content: center; text-align: center;
+    font-size: 48px; font-weight: 700; color: var(--accent); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 16px; padding: 0 48px; line-height: 1.25; }
+  #side { display: flex; flex-direction: column; gap: 18px; }
+  #side .panel { padding: 22px 26px; }
+  .label { font-size: 18px; letter-spacing: 3px; color: var(--dim); margin-bottom: 8px; }
+  .gauge { height: 34px; background: #0b0d12; border-radius: 999px; overflow: hidden; border: 1px solid var(--line); }
+  .gauge > div { height: 100%; width: 0; background: linear-gradient(90deg, var(--blue), #b84aff, var(--red)); transition: width .15s; }
+  #tier { font-size: 44px; font-weight: 800; letter-spacing: 2px; }
+  #tier.HIGH { color: var(--gold); text-shadow: 0 0 24px var(--gold); }
+  #price { font-size: 26px; color: var(--dim); }
+  #roast { font-size: 36px; font-weight: 800; }
+  .sub { font-size: 16px; color: var(--dim); margin-top: 6px; }
+  #patience .gauge > div { background: linear-gradient(90deg, var(--red), #ffb020, var(--green)); }
+  #burn { font-size: 44px; font-weight: 800; color: #ff7a3b; font-variant-numeric: tabular-nums; }
+  #angry { position: fixed; inset: 0; background: #b00000; display: none; align-items: center; justify-content: center;
+    flex-direction: column; text-align: center; z-index: 10; animation: flash .3s infinite alternate; }
+  #angry.on { display: flex; }
+  #angry .emoji { font-size: 200px; }
+  #angry .big { font-size: 96px; font-weight: 900; letter-spacing: 6px; }
+  #angry .why { font-size: 64px; font-weight: 700; margin-top: 24px; padding: 0 120px; }
+  @keyframes flash { from { background: #b00000; } to { background: #ff2020; } }
+  #badge { position: fixed; right: 36px; bottom: 36px; background: var(--red); color: #fff; padding: 8px 16px;
+    border-radius: 8px; font-size: 18px; display: none; z-index: 20; }
+  #badge.on { display: block; }
+</style>
+</head>
+<body>
+  <div id="top">
+    <div id="name">DUCK</div>
+    <div id="state" data-s="idle">IDLE</div>
+    <div id="health">
+      <span><i class="dot" id="h-unoq"></i>UNO Q</span>
+      <span><i class="dot" id="h-ollama"></i>GEMMA</span>
+      <span><i class="dot" id="h-mic"></i>MIC</span>
+    </div>
+  </div>
+
+  <div id="main">
+    <div class="panel" id="heard"><h2>YOU SAID</h2><div class="text">…</div></div>
+    <div class="panel" id="prompt"><h2>DUCK TYPED</h2><div class="text">…</div></div>
+    <div id="say">…</div>
+  </div>
+
+  <div id="side">
+    <div class="panel" id="dial">
+      <div class="label">COST DIAL</div>
+      <div class="gauge"><div id="dial-bar"></div></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:14px">
+        <div id="tier">LOW</div><div id="price">FREE</div>
+      </div>
+      <div class="sub" id="locked-tier">locked: LOW</div>
+    </div>
+    <div class="panel">
+      <div class="label">ROAST LEVEL</div>
+      <div id="roast">POLITE</div>
+      <div class="sub" id="locked-roast">locked: POLITE</div>
+    </div>
+    <div class="panel" id="patience">
+      <div class="label">PATIENCE</div>
+      <div class="gauge"><div id="pat-bar" style="width:100%"></div></div>
+      <div class="sub" id="pat-text">15 / 15</div>
+    </div>
+    <div class="panel">
+      <div class="label">BURN METER</div>
+      <div id="burn">$0.00 burned</div>
+    </div>
+  </div>
+
+  <div id="angry">
+    <div class="emoji">🗡️</div>
+    <div class="big">SUPPORT REVOKED</div>
+    <div class="why" id="angry-why"></div>
+  </div>
+  <div id="badge">overlay disconnected</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const NAME = new URLSearchParams(location.search).get("name");
+  if (NAME) $("name").textContent = NAME;
+  let angryTimer = null;
+
+  function handle(ev) {
+    switch (ev.type) {
+      case "state":
+        $("state").textContent = ev.state.toUpperCase() + (ev.state === "typing" ? "..." : "");
+        $("state").dataset.s = ev.state;
+        break;
+      case "heard": $("heard").querySelector(".text").textContent = ev.text; break;
+      case "prompt": $("prompt").querySelector(".text").textContent = ev.text; break;
+      case "say": $("say").textContent = ev.text; break;
+      case "patience": {
+        const pct = ev.max ? Math.max(0, ev.value) / ev.max * 100 : 0;
+        $("pat-bar").style.width = pct + "%";
+        $("pat-text").textContent = `${ev.value} / ${ev.max}`;
+        break;
+      }
+      case "dial":
+        $("dial-bar").style.width = (ev.raw / 1023 * 100) + "%";
+        $("tier").textContent = ev.tier; $("tier").className = ev.tier;
+        $("price").textContent = ev.price;
+        $("roast").textContent = ev.roast;
+        $("locked-tier").textContent = "locked: " + ev.locked_tier;
+        $("locked-roast").textContent = "locked: " + ev.locked_roast;
+        break;
+      case "burn": $("burn").textContent = `$${Number(ev.amount).toFixed(2)} burned`; break;
+      case "health":
+        $("h-unoq").classList.toggle("ok", !!ev.unoq);
+        $("h-ollama").classList.toggle("ok", !!ev.ollama);
+        $("h-mic").classList.toggle("ok", !!ev.mic);
+        break;
+      case "name": $("name").textContent = ev.name; break;
+      case "angry":
+        $("angry-why").textContent = ev.reason;
+        $("angry").classList.add("on");
+        clearTimeout(angryTimer);
+        angryTimer = setTimeout(() => $("angry").classList.remove("on"), 3000);
+        $("pat-bar").style.width = "0%";
+        break;
+      case "reset":
+        clearTimeout(angryTimer);
+        $("angry").classList.remove("on");
+        for (const id of ["heard", "prompt"]) $(id).querySelector(".text").textContent = "…";
+        $("say").textContent = "…";
+        break;
+    }
+  }
+
+  function connect() {
+    const ws = new WebSocket("ws://localhost:8765");
+    ws.onopen = () => $("badge").classList.remove("on");
+    ws.onmessage = m => { try { handle(JSON.parse(m.data)); } catch (e) { console.error(e); } };
+    ws.onclose = () => { $("badge").classList.add("on"); setTimeout(connect, 1000); };
+    ws.onerror = () => ws.close();
+  }
+  connect();
+  function fit() {  // scale the fixed 1920x1080 layout to the window
+    const k = Math.min(innerWidth / 1920, innerHeight / 1080);
+    document.body.style.transform = `scale(${k})`;
+  }
+  addEventListener("resize", fit); fit();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+profiles:
+  default:
+    fqbn: arduino:zephyr:unoq
+    libraries:
+      - Arduino_RouterBridge
+      - Adafruit GFX Library
+      - Adafruit SSD1306
+      - Adafruit BusIO
+      - Stepper
+default_profile: default
