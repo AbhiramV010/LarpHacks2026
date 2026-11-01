@@ -1,10 +1,13 @@
-"""STT with faster-whisper; TTS with ElevenLabs, falling back to the Windows SAPI voice."""
+"""Always-on listener (numpy VAD) -> faster-whisper STT; TTS via ElevenLabs, falling back to Windows SAPI."""
 import logging
 import os
+import queue
 import subprocess
 import tempfile
 import threading
+import time
 import wave
+from collections import deque
 
 import numpy as np
 import requests
@@ -13,38 +16,104 @@ import config
 
 log = logging.getLogger("speech")
 RATE = 16000
+FRAME = 480                       # 30 ms
+SPEECH_START_S = 0.6              # above-threshold time needed to start
+SPEECH_END_S = 0.8                # below-threshold time that ends an utterance
+PRE_ROLL_S = 0.3                  # audio kept from before the start
+CALIBRATE_S = 2.0
+MAX_UTTERANCE_S = 30.0
 
 
-class Recorder:
-    def __init__(self):
-        self._chunks = []
-        self._stream = None
-        self._lock = threading.Lock()
+class Listener:
+    """Thread that turns the mic into utterances. Puts (speech_started) and (audio) events on `events`."""
+
+    def __init__(self, is_muted, on_level):
+        self.events = queue.Queue()     # ("start", None) | ("audio", np.ndarray)
+        self.is_muted = is_muted        # callable -> True while the duck is talking/typing/translating
+        self.on_level = on_level        # callable(rms, threshold), throttled by caller
+        self.threshold = 0.0
         self.ok = True
+        self._recalibrate = threading.Event()
+        self._frames = queue.Queue()
+        self._recalibrate.set()         # calibrate on startup
 
     def start(self):
-        with self._lock:
-            self._chunks = []
-            try:
-                self._stream = sd.InputStream(samplerate=RATE, channels=1, dtype="int16",
-                                              callback=lambda d, f, t, s: self._chunks.append(d.copy()))
-                self._stream.start()
-                self.ok = True
-            except Exception as e:
-                log.error("Mic open failed: %s", e)
-                self.ok = False
-                self._stream = None
+        threading.Thread(target=self._run, daemon=True).start()
 
-    def stop(self):
-        """Returns float32 mono audio at 16 kHz."""
-        with self._lock:
-            if self._stream:
-                self._stream.stop()
-                self._stream.close()
-                self._stream = None
-            if not self._chunks:
-                return np.zeros(0, dtype=np.float32)
-            return np.concatenate(self._chunks)[:, 0].astype(np.float32) / 32768.0
+    def recalibrate(self):
+        self._recalibrate.set()
+
+    def _callback(self, indata, frames, t, status):
+        self._frames.put(indata[:, 0].copy())
+
+    def _read(self):
+        return self._frames.get()
+
+    def _run(self):
+        try:
+            stream = sd.InputStream(samplerate=RATE, channels=1, dtype="float32",
+                                    blocksize=FRAME, callback=self._callback)
+            stream.start()
+        except Exception as e:
+            log.error("Mic open failed: %s", e)
+            self.ok = False
+            return
+
+        pre = deque(maxlen=int(PRE_ROLL_S * RATE / FRAME))
+        speaking = False
+        above = 0
+        below = 0
+        chunk = []
+        last_level = 0.0
+        while True:
+            if self._recalibrate.is_set():
+                self._calibrate()
+                self._recalibrate.clear()
+                pre.clear()
+                speaking, above, below, chunk = False, 0, 0, []
+                continue
+
+            frame = self._read()
+            rms = float(np.sqrt(np.mean(frame ** 2)))
+            now = time.time()
+            if now - last_level > 0.1:
+                self.on_level(rms, self.threshold)
+                last_level = now
+
+            if self.is_muted():           # self-hearing guard: drop everything
+                pre.clear()
+                speaking, above, below, chunk = False, 0, 0, []
+                continue
+
+            loud = rms > self.threshold
+            if not speaking:
+                pre.append(frame)
+                above = above + 1 if loud else 0
+                if above * FRAME / RATE >= SPEECH_START_S:
+                    speaking = True
+                    below = 0
+                    chunk = list(pre)
+                    self.events.put(("start", None))
+                continue
+
+            chunk.append(frame)
+            below = 0 if loud else below + 1
+            too_long = len(chunk) * FRAME / RATE > MAX_UTTERANCE_S
+            if below * FRAME / RATE >= SPEECH_END_S or too_long:
+                audio = np.concatenate(chunk)
+                speaking, above, below, chunk = False, 0, 0, []
+                pre.clear()
+                if len(audio) / RATE >= 0.6:
+                    self.events.put(("audio", audio))
+                else:
+                    self.events.put(("cancel", None))
+
+    def _calibrate(self):
+        n = int(CALIBRATE_S * RATE / FRAME)
+        levels = [float(np.sqrt(np.mean(self._read() ** 2))) for _ in range(n)]
+        noise = float(np.sqrt(np.mean(np.square(levels))))
+        self.threshold = max(3.0 * noise, 0.005)
+        log.info("Noise floor %.4f, speech threshold %.4f", noise, self.threshold)
 
 
 class STT:
@@ -54,8 +123,6 @@ class STT:
         log.info("Whisper %s loaded", config.WHISPER_MODEL)
 
     def transcribe(self, audio):
-        if len(audio) < RATE * 0.4:
-            return ""
         segments, _ = self.model.transcribe(audio, language="en", vad_filter=True, beam_size=1)
         return " ".join(s.text.strip() for s in segments).strip()
 

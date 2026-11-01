@@ -9,9 +9,9 @@
 #define PIN_B 3
 #define PIN_G 5
 #define PIN_R 6
-#define EYE_L 10
-#define EYE_R 11
-#define BTN 12
+#define POT_PWR 9   // pot + leg; OUTPUT HIGH
+#define EYE 10      // single laser eye
+#define BTN 12      // optional, INPUT_PULLUP
 #define POT A2
 #define STEPS_PER_REV 2048
 
@@ -43,7 +43,7 @@ unsigned long lastPotSend = 0, lastPotRead = 0, lastBtnChange = 0, lastFlicker =
 int btnStable = HIGH, btnRaw = HIGH;
 
 void rgb(int R, int G, int B) { analogWrite(PIN_R, R); analogWrite(PIN_G, G); analogWrite(PIN_B, B); }
-void setEyes(int v) { eyes = constrain(v, 0, 255); analogWrite(EYE_L, eyes); analogWrite(EYE_R, eyes); }
+void setEyes(int v) { eyes = constrain(v, 0, 255); analogWrite(EYE, eyes); }
 void releaseCoils() { digitalWrite(2, LOW); digitalWrite(4, LOW); digitalWrite(7, LOW); digitalWrite(8, LOW); }
 
 void drawOled() {
@@ -134,7 +134,7 @@ void pollInputs() {
     lastPotRead = t;
     int v = analogRead(POT);
     if (v > potMax) potMax = v;
-    if (potMax > 1023) v = v / 4;  // 12-bit ADC: scale to 0..1023
+    if (potMax > 1023) v = (long)v * 1023 / 4095;  // 12-bit ADC (confirm with test_sketch "p")
     if (abs(v - lastPot) > 20 && t - lastPotSend >= 100) {
       lastPot = v; lastPotSend = t;
       Bridge.call("event", "POT " + String(v));
@@ -144,7 +144,8 @@ void pollInputs() {
 
 void setup() {
   pinMode(PIN_R, OUTPUT); pinMode(PIN_G, OUTPUT); pinMode(PIN_B, OUTPUT);
-  pinMode(EYE_L, OUTPUT); pinMode(EYE_R, OUTPUT);
+  pinMode(EYE, OUTPUT);
+  pinMode(POT_PWR, OUTPUT); digitalWrite(POT_PWR, HIGH);
   pinMode(BTN, INPUT_PULLUP);
   pinMode(LED_BUILTIN, OUTPUT); digitalWrite(LED_BUILTIN, HIGH);  // LED3 active LOW: off
   Wire.begin();

@@ -51,12 +51,13 @@ A small Gemma model also runs on the Uno Q itself. It writes short OLED one-line
 | D3 | RGB blue | PWM, common-cathode LED, HIGH = on |
 | D5 | RGB green | PWM |
 | D6 | RGB red | PWM |
-| D10 | Left laser eye | PWM |
-| D11 | Right laser eye | PWM |
-| D12 | Push button to GND | `INPUT_PULLUP`, pressed = LOW |
-| A2 | Potentiometer wiper | Pot ends on 3.3V and GND |
+| D9 | Pot power (OUTPUT, HIGH). Never use for anything else | changes.md |
+| D10 | Single laser eye | PWM |
+| D11 | Free | |
+| D12 | Optional button to GND | `INPUT_PULLUP`, pressed = LOW, acts as reset |
+| A2 | Potentiometer wiper | Pot - leg to any GND |
 | SDA, SCL (header by AREF) | OLED | SSD1306 128x64, address 0x3C (0x3D possible) |
-| D9 | Free | Spare PWM |
+| 3.3V | OLED VCC | |
 
 The stepper board is powered from an external 5V supply with a shared ground. **The duck must face the laptop at power-on; that is angle 0. Angle 90 faces the user.**
 
@@ -124,6 +125,8 @@ The Uno Q Python learns the laptop's address from the source of incoming packets
 
 ## 6. Uno Q software
 
+(changes.md: one laser eye on D10, pot powered from D9, optional button on D12, test sketch at `unoq_app/test_sketch.ino`.)
+
 ### 6.1 MCU sketch (`unoq_app/sketch/sketch.ino`)
 
 Libraries: `Arduino_RouterBridge`, `Wire`, `Adafruit_GFX`, `Adafruit_SSD1306`, `Stepper`.
@@ -179,6 +182,8 @@ From inside the App Lab container, `localhost` may not be the board's host. The 
 
 ## 7. Laptop software
 
+(changes.md: always-on VAD listener in `speech.py`, no push-to-talk, optional wake word via `WAKE_WORD` in `config.py`.)
+
 ### 7.1 `config.py`
 
 ```python
@@ -201,8 +206,8 @@ PRE_TYPE_PAUSE_S = 1.5
 ### 7.2 State machine (`duck_main.py`)
 
 ```
-IDLE --BTN DOWN or F7 down--> LISTENING
-LISTENING --BTN UP or F7 up--> TRANSLATING
+IDLE --speech detected (VAD)--> LISTENING --speech ends--> TRANSLATING
+(no push-to-talk; F7 removed; D12 button press = reset)
 TRANSLATING --brain result-->
     calm:  TALKING (speak "say") -> TYPING (type "prompt") -> WAITING -> IDLE
     angry: ANGRY (send ANGER, speak angry line) -> stays until RESET
@@ -316,6 +321,7 @@ Also tell the user to set the hotspot network to Private in Windows settings.
 | `burn` | `amount` |
 | `health` | `unoq`, `ollama`, `mic` |
 | `angry` | `reason` |
+| `mic` | `rms`, `threshold` (live mic level for the overlay bar) |
 | `reset` | none |
 
 Patience: `max` is the total trigger for the locked roast level; `value` is `max` minus the running blunder total, floored at 0.

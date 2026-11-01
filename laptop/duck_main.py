@@ -1,5 +1,6 @@
-"""The duck's state machine. Hotkeys: F7 push-to-talk, F8 reset, F10 kill switch."""
+"""The duck's state machine. Always listening. Hotkeys: F8 reset, F10 kill switch. Button D12 = reset."""
 import asyncio
+import difflib
 import json
 import logging
 import queue
@@ -12,7 +13,7 @@ import config
 import typer
 from brain import Brain
 from link import Link
-from speech import STT, TTS, Recorder
+from speech import STT, TTS, Listener
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("duck")
@@ -23,6 +24,7 @@ TIERS = [  # (max_pot, tier, price, roast, single_trigger, total_trigger)
     (1023, "HIGH", "PREMIUM $49.99/mo", "UNHINGED", 6, 8),
 ]
 BURN = {"LOW": 0.0, "MEDIUM": 0.37, "HIGH": 4.20}
+SELF_HEAR_GUARD_S = 0.5
 
 
 def tier_for(pot):
@@ -30,6 +32,17 @@ def tier_for(pot):
         if pot <= row[0]:
             return row
     return TIERS[-1]
+
+
+def strip_wake_word(text, wake):
+    """Return the text after the wake word, or None if it isn't there (fuzzy)."""
+    words = text.split()
+    if len(words) < 2:
+        return None
+    head = " ".join(w.lower().strip(".,!?") for w in words[:2])
+    if head in ("a duck", "hey duc", "a duc") or difflib.SequenceMatcher(None, head, wake).ratio() >= 0.7:
+        return " ".join(words[2:]).strip() or None
+    return None
 
 
 class Overlay:
@@ -69,18 +82,28 @@ class Duck:
         self.link = Link()
         self.brain = Brain()
         self.tts = TTS()
-        self.rec = Recorder()
         self.state = "idle"
         self.pot = 0
         self.locked = tier_for(0)
         self.total_blunder = 0
         self.burn = 0.0
         self.history = []
-        self.work = queue.Queue()      # requests from hotkey/UDP threads to the main loop
+        self.speaking = False        # duck audio is playing
+        self.mute_until = 0.0        # self-hearing guard end time
+        self.work = queue.Queue()    # reset requests from F8 / button, drained by the main loop
         self.busy = threading.Lock()
         self.stt = STT()
+        self.listener = Listener(self.muted, self.on_level)
         self.brain.warm()
         self.reset()
+
+    # ---- gating ----
+    def muted(self):
+        return (self.speaking or self.state in ("translating", "talking", "typing")
+                or time.time() < self.mute_until)
+
+    def _end_audio(self):
+        self.mute_until = time.time() + SELF_HEAR_GUARD_S
 
     # ---- state helpers ----
     def set_state(self, name):
@@ -88,6 +111,9 @@ class Duck:
         self.link.send(f"STATE {name}")
         self.overlay.send("state", state=name)
         log.info("STATE %s", name.upper())
+
+    def on_level(self, rms, threshold):
+        self.overlay.send("mic", rms=round(rms, 4), threshold=round(threshold, 4))
 
     def send_dial(self):
         _, tier, price, roast, _, _ = tier_for(self.pot)
@@ -99,7 +125,7 @@ class Duck:
         self.overlay.send("patience", value=max(0, mx - self.total_blunder), max=mx)
 
     def send_health(self):
-        self.overlay.send("health", unoq=self.link.up, ollama=self.brain.ok, mic=self.rec.ok)
+        self.overlay.send("health", unoq=self.link.up, ollama=self.brain.ok, mic=self.listener.ok)
 
     def reset(self):
         typer.stop_flag.set()
@@ -114,24 +140,22 @@ class Duck:
         self.send_dial()
         self.send_patience()
         self.overlay.send("burn", amount=round(self.burn, 2))
+        self.listener.recalibrate()
+        self._end_audio()
 
-    # ---- the pipeline ----
-    def on_press(self):
-        if self.state != "idle":
-            return
-        self.set_state("listening")
-        self.rec.start()
-        self.t0 = time.time()
+    def kill(self):
+        typer.stop_flag.set()
+        TTS.stop()
+        self.set_state("idle")
+        self._end_audio()
 
-    def on_release(self):
-        if self.state != "listening":
-            return
-        audio = self.rec.stop()
-        if time.time() - self.t0 < 0.4 or len(audio) == 0:
-            self.set_state("idle")
-            return
+    # ---- pipeline ----
+    def process(self, audio):
+        """Runs in a worker thread. Only called when the state is LISTENING."""
         self.set_state("translating")
         text = self.stt.transcribe(audio)
+        if config.WAKE_WORD:
+            text = strip_wake_word(text, config.WAKE_WORD) or ""
         log.info("Heard: %s", text)
         if not text:
             self.set_state("idle")
@@ -155,92 +179,92 @@ class Duck:
             self.overlay.send("angry", reason=reason)
             line = self.brain.angry_line(reason, roast, tier, price)
             self.overlay.send("say", text=line)
-            self.tts.say(line)
-            return  # stays angry until F8/RESET
+            self.speak(line)
+            return  # stays angry until F8 or the button
 
         self.link.send("PAN 90")
         self.set_state("talking")
         self.overlay.send("say", text=r["say"])
-        self.tts.say(r["say"])
+        self.speak(r["say"])
         if self.state != "talking":
             return  # killed by F10
         self.link.send("PAN 0")
         self.set_state("typing")
         done = typer.type_prompt(r["prompt"], on_typing=lambda on: self.link.send(f"TYPING {int(on)}"))
+        self._end_audio()
         if done:
             self.set_state("waiting")
             time.sleep(1.0)
         if self.state in ("typing", "waiting"):
             self.set_state("idle")
 
-    def kill(self):
-        typer.stop_flag.set()
-        TTS.stop()
-        if self.state == "listening":
-            self.rec.stop()
-        self.set_state("idle")
+    def speak(self, line):
+        self.speaking = True
+        try:
+            self.tts.say(line)
+        finally:
+            self.speaking = False
+            self._end_audio()
+
+    def _guarded(self, audio):
+        if self.busy.acquire(blocking=False):
+            try:
+                self.process(audio)
+            except Exception:
+                log.exception("pipeline error")
+                self.set_state("idle")
+            finally:
+                self.busy.release()
 
     # ---- input sources ----
-    def on_event(self, ev):
+    def on_link_event(self, ev):
         if ev == "BTN DOWN":
-            self.work.put("press")
-        elif ev == "BTN UP":
-            self.work.put("release")
+            self.work.put("reset")
         elif ev.startswith("POT "):
             try:
                 self.pot = int(ev[4:])
                 self.send_dial()
             except ValueError:
                 pass
-        elif ev == "RESET":
-            self.work.put("reset")
 
     def hotkeys(self):
         def on_press(k):
-            if k == keyboard.Key.f7:
-                self.work.put("press")
-            elif k == keyboard.Key.f8:
+            if k == keyboard.Key.f8:
                 self.work.put("reset")
             elif k == keyboard.Key.f10:
                 self.kill()
-
-        def on_release(k):
-            if k == keyboard.Key.f7:
-                self.work.put("release")
-        keyboard.Listener(on_press=on_press, on_release=on_release).start()
+        keyboard.Listener(on_press=on_press).start()
 
     def run(self):
         self.hotkeys()
-        log.info("%s ready. F7 = talk, F8 = reset, F10 = kill.", config.DUCK_NAME)
+        self.listener.start()
+        log.info("%s ready. Just talk. F8 = reset, F10 = kill.", config.DUCK_NAME)
         last_health = 0
         while True:
             try:
-                self.on_event(self.link.events.get_nowait())
+                self.on_link_event(self.link.events.get_nowait())
             except queue.Empty:
                 pass
             try:
-                job = self.work.get(timeout=0.05)
+                job = self.work.get_nowait()
             except queue.Empty:
                 job = None
-            if job == "press":
-                self.on_press()
-            elif job == "release":
-                threading.Thread(target=self._guarded, args=(self.on_release,), daemon=True).start()
-            elif job == "reset":
+            if job == "reset":
                 self.reset()
+            audio = None
+            try:
+                kind, audio = self.listener.events.get(timeout=0.05)
+            except queue.Empty:
+                kind = None
+            if kind == "start" and self.state == "idle":
+                self.set_state("listening")
+            elif kind == "cancel" and self.state == "listening":
+                self.set_state("idle")
+            elif kind == "audio" and self.state == "listening":
+                threading.Thread(target=self._guarded, args=(audio,), daemon=True).start()
             if time.time() - last_health > 2:
                 self.send_health()
                 last_health = time.time()
-
-    def _guarded(self, fn):
-        if self.busy.acquire(blocking=False):
-            try:
-                fn()
-            except Exception:
-                log.exception("pipeline error")
-                self.set_state("idle")
-            finally:
-                self.busy.release()
 
 
 if __name__ == "__main__":
