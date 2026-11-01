@@ -11,6 +11,7 @@ import time
 from pynput import keyboard
 
 import config
+import notepad
 import typer
 from brain import Brain
 from link import Link
@@ -163,10 +164,12 @@ class Duck:
             self.set_state("idle")
             return
         self.overlay.send("heard", text=text)
-        code = self.brain.code(text)
+        existing = notepad.read_current()  # what's in Notepad now, so Gemma can edit it
+        code = self.brain.code(text, existing)
         self.overlay.send("prompt", text=code[:2000])
-        subprocess.Popen('cmd /c start "" notepad', shell=True)
+        notepad.open_and_focus()
         time.sleep(1.5)  # let Notepad take focus
+        notepad.select_all()  # the typed file replaces whatever is there
         self.set_state("typing")
         done = typer.type_prompt(code, on_typing=lambda on: self.link.send(f"TYPING {int(on)}"), code=True)
         self._end_audio()

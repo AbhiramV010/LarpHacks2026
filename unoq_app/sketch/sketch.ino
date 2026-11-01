@@ -4,6 +4,8 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Fonts/FreeSansBold9pt7b.h>
+#include <Fonts/FreeSans9pt7b.h>
 #include <Stepper.h>
 
 #define PIN_B 3
@@ -48,12 +50,13 @@ void releaseCoils() { digitalWrite(2, LOW); digitalWrite(4, LOW); digitalWrite(7
 
 void drawOled() {
   oled.clearDisplay();
-  oled.setTextSize(2);
-  oled.setCursor(0, 8);
-  oled.print(line1.substring(0, 10));
-  oled.setTextSize(1);
-  oled.setCursor(0, 44);
-  oled.print(line2.substring(0, 21));
+  oled.setFont(&FreeSansBold9pt7b);
+  oled.setCursor(0, 22);           // font cursor is the baseline
+  oled.print(line1.substring(0, 14));
+  oled.setFont(&FreeSans9pt7b);
+  oled.setCursor(0, 56);
+  oled.print(line2.substring(0, 18));
+  oled.setFont();                  // back to the built-in font
   oled.display();
 }
 

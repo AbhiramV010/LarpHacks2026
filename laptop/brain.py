@@ -92,9 +92,14 @@ class Brain:
                 log.warning("Bad JSON from model (attempt %d): %s", attempt + 1, e)
         return {"prompt": transcript, "say": "Fine. Sending it as is.", "blunder": 0, "reason": ""}
 
-    def code(self, transcript):
-        """Plain code from Gemma: no JSON, no blunder scoring."""
-        msgs = [{"role": "system", "content": CODE_SYSTEM}, {"role": "user", "content": transcript}]
+    def code(self, transcript, existing=""):
+        """Plain code from Gemma: no JSON, no blunder scoring. With `existing`, Gemma edits that code."""
+        if existing:
+            user = ("Current file:\n" + existing + "\n\nChange request: " + transcript
+                    + "\n\nOutput the complete updated file.")
+        else:
+            user = transcript
+        msgs = [{"role": "system", "content": CODE_SYSTEM}, {"role": "user", "content": user}]
         try:
             raw = self._chat(msgs, temperature=0.2, json_mode=False)
         except Exception as e:
