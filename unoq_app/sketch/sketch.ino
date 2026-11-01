@@ -4,8 +4,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <Fonts/FreeSansBold9pt7b.h>
-#include <Fonts/FreeSans9pt7b.h>
+#include <Fonts/FreeSansBold12pt7b.h>
 #include <Stepper.h>
 
 #define PIN_B 3
@@ -32,9 +31,52 @@ void onCmd(String cmd) {
   qTail = next;
 }
 
+// ---- one-line OLED: one word at a time, cycling through the words ----
+const int MAX_WORDS = 8;
+const unsigned long WORD_MS = 1000;
+String words[MAX_WORDS];
+int wordCount = 0;
+int wordIdx = 0;
+unsigned long lastWordChange = 0;
+
+void drawWord() {
+  oled.clearDisplay();
+  oled.setFont(&FreeSansBold12pt7b);
+  oled.setTextColor(SSD1306_WHITE);
+  int16_t x1, y1;
+  uint16_t w, h;
+  oled.getTextBounds(words[wordIdx].c_str(), 0, 0, &x1, &y1, &w, &h);
+  oled.setCursor((128 - (int)w) / 2, 42);
+  oled.print(words[wordIdx]);
+  oled.setFont();
+  oled.display();
+}
+
+void showText(String t) {
+  wordCount = 0;
+  t.trim();
+  int start = 0;
+  while (start < (int)t.length() && wordCount < MAX_WORDS) {
+    int sp = t.indexOf(' ', start);
+    if (sp < 0) sp = t.length();
+    if (sp > start) words[wordCount++] = t.substring(start, sp);
+    start = sp + 1;
+  }
+  if (wordCount == 0) { words[0] = "READY"; wordCount = 1; }
+  wordIdx = 0;
+  lastWordChange = millis();
+  drawWord();
+}
+
+void cycleWords() {
+  if (wordCount <= 1 || millis() - lastWordChange < WORD_MS) return;
+  lastWordChange = millis();
+  wordIdx = (wordIdx + 1) % wordCount;
+  drawWord();
+}
+
 // ---- state ----
 String state = "idle";
-String line1 = "DUCK", line2 = "booting";
 int r = 40, g = 40, b = 40;
 bool typing = false;
 int eyes = 0;
@@ -47,20 +89,6 @@ int btnStable = HIGH, btnRaw = HIGH;
 void rgb(int R, int G, int B) { analogWrite(PIN_R, R); analogWrite(PIN_G, G); analogWrite(PIN_B, B); }
 void setEyes(int v) { eyes = constrain(v, 0, 255); analogWrite(EYE, eyes); }
 void releaseCoils() { digitalWrite(2, LOW); digitalWrite(4, LOW); digitalWrite(7, LOW); digitalWrite(8, LOW); }
-
-void drawOled() {
-  oled.clearDisplay();
-  oled.setFont(&FreeSansBold9pt7b);
-  oled.setCursor(0, 22);           // font cursor is the baseline
-  oled.print(line1.substring(0, 14));
-  oled.setFont(&FreeSans9pt7b);
-  oled.setCursor(0, 56);
-  oled.print(line2.substring(0, 18));
-  oled.setFont();                  // back to the built-in font
-  oled.display();
-}
-
-void setOled(String a, String c) { line1 = a; line2 = c; drawOled(); }
 
 void moveTo(int deg, int rpm) {
   deg = constrain(deg, 0, 120);
@@ -83,13 +111,13 @@ void setState(String s) {
   else if (s == "angry")       { r = 255; g = 0;   b = 0; }
   String cap = s; cap.toUpperCase();
   if (s == "typing") cap += "...";
-  line1 = cap;
-  drawOled();
+  if (s == "idle") cap = "READY";
+  showText(cap);
 }
 
 void anger() {
   setState("angry");
-  setOled("SUPPORT", "REVOKED");
+  showText("SUPPORT REVOKED");
   moveTo(90, 12);
   for (int i = 0; i <= 255; i += 5) { setEyes(i); delay(10); }  // ~500 ms ramp
   for (int i = 0; i < 5; i++) {  // sword shake, LED flips off/red on each swing
@@ -106,16 +134,12 @@ void handle(String cmd) {
   String op = sp < 0 ? cmd : cmd.substring(0, sp);
   String arg = sp < 0 ? "" : cmd.substring(sp + 1);
   if (op == "STATE") setState(arg);
-  else if (op == "OLED") {
-    int bar = arg.indexOf('|');
-    setOled(bar < 0 ? arg : arg.substring(0, bar), bar < 0 ? "" : arg.substring(bar + 1));
-  }
-  else if (op == "LINE2") { line2 = arg; drawOled(); }
+  else if (op == "OLED") showText(arg);
   else if (op == "PAN") moveTo(arg.toInt(), 12);
   else if (op == "EYES") setEyes(arg.toInt());
   else if (op == "TYPING") typing = arg.toInt() == 1;
   else if (op == "ANGER") anger();
-  else if (op == "RESET") { setEyes(0); moveTo(0, 12); setState("idle"); line2 = ""; drawOled(); }
+  else if (op == "RESET") { setEyes(0); moveTo(0, 12); setState("idle"); }
 }
 
 void updateLed() {
@@ -157,7 +181,7 @@ void setup() {
   Wire.begin();
   if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3C)) oled.begin(SSD1306_SWITCHCAPVCC, 0x3D);
   oled.setTextColor(SSD1306_WHITE);
-  drawOled();
+  showText("READY");
   rgb(r, g, b);
   releaseCoils();
   Bridge.begin();
@@ -173,4 +197,5 @@ void loop() {
   }
   updateLed();
   pollInputs();
+  cycleWords();
 }

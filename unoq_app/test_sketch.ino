@@ -4,8 +4,7 @@
 #include <Stepper.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <Fonts/FreeSansBold9pt7b.h>
-#include <Fonts/FreeSans9pt7b.h>
+#include <Fonts/FreeSansBold12pt7b.h>
 #include "Arduino_RouterBridge.h"
 
 #define IO Monitor  // if the Serial Monitor shows nothing, change to Serial
@@ -32,14 +31,48 @@ void turnTo(int a, int rpm = 12) {
   releaseCoils();
 }
 
-void show(const char* l1, const char* l2) {
-  if (!oledOk) return;
+// ---- one-line OLED: one word at a time, cycling through the words ----
+const int MAX_WORDS = 8;
+const unsigned long WORD_MS = 1000;
+String words[MAX_WORDS];
+int wordCount = 0;
+int wordIdx = 0;
+unsigned long lastWordChange = 0;
+
+void drawWord() {
   oled.clearDisplay();
+  oled.setFont(&FreeSansBold12pt7b);
   oled.setTextColor(SSD1306_WHITE);
-  oled.setFont(&FreeSansBold9pt7b); oled.setCursor(0, 22); oled.println(l1);
-  oled.setFont(&FreeSans9pt7b);     oled.setCursor(0, 56); oled.println(l2);
+  int16_t x1, y1;
+  uint16_t w, h;
+  oled.getTextBounds(words[wordIdx].c_str(), 0, 0, &x1, &y1, &w, &h);
+  oled.setCursor((128 - (int)w) / 2, 42);
+  oled.print(words[wordIdx]);
   oled.setFont();
   oled.display();
+}
+
+void show(String t) {
+  wordCount = 0;
+  t.trim();
+  int start = 0;
+  while (start < (int)t.length() && wordCount < MAX_WORDS) {
+    int sp = t.indexOf(' ', start);
+    if (sp < 0) sp = t.length();
+    if (sp > start) words[wordCount++] = t.substring(start, sp);
+    start = sp + 1;
+  }
+  if (wordCount == 0) { words[0] = "READY"; wordCount = 1; }
+  wordIdx = 0;
+  lastWordChange = millis();
+  if (oledOk) drawWord();
+}
+
+void cycleWords() {
+  if (!oledOk || wordCount <= 1 || millis() - lastWordChange < WORD_MS) return;
+  lastWordChange = millis();
+  wordIdx = (wordIdx + 1) % wordCount;
+  drawWord();
 }
 
 void help() {
@@ -66,12 +99,13 @@ void setup() {
   IO.begin();
   Wire.begin();
   oledOk = oled.begin(SSD1306_SWITCHCAPVCC, 0x3C) || oled.begin(SSD1306_SWITCHCAPVCC, 0x3D);
-  show("DUCK", "test ready");
+  show("READY");
   IO.println(oledOk ? "OLED ok" : "OLED not found");
   help();
 }
 
 void loop() {
+  cycleWords();
   if (!IO.available()) return;
   char c = IO.read();
   if (c == '\n' || c == '\r' || c == ' ') return;
@@ -99,7 +133,7 @@ void loop() {
 
     case 'd':
       IO.println(oledOk ? "OLED: showing QUACK" : "OLED not found, try i");
-      show("hello!", "oled works");
+      show("hello world, this scrolls");
       break;
 
     case 'i':
@@ -143,7 +177,7 @@ void loop() {
     case 'a':
       IO.println("ANGER");
       rgb(255, 0, 0);
-      show("SUPPORT", "REVOKED");
+      show("SUPPORT REVOKED");
       turnTo(90);
       for (int v = 0; v <= 255; v += 15) { eyes(v); delay(30); }
       for (int i = 0; i < 5; i++) {
@@ -155,7 +189,7 @@ void loop() {
       break;
 
     case 'z':
-      turnTo(0); rgb(0, 0, 0); eyes(0); show("DUCK", "reset");
+      turnTo(0); rgb(0, 0, 0); eyes(0); show("READY");
       IO.println("reset");
       break;
 
