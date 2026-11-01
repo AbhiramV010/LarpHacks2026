@@ -25,7 +25,6 @@
   #health { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 28px; font-size: 22px; color: var(--dim); }
   #miclevel { position: relative; width: 100%; height: 10px; background: #0b0d12; border-radius: 6px; overflow: hidden; }
   #mic-bar { height: 100%; width: 0; background: var(--green); transition: width .08s; }
-  #mic-thr { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); }
   .dot { display: inline-block; width: 18px; height: 18px; border-radius: 50%; background: var(--red);
     margin-right: 10px; vertical-align: -2px; box-shadow: 0 0 10px var(--red); }
   .dot.ok { background: var(--green); box-shadow: 0 0 10px var(--green); }
@@ -71,7 +70,7 @@
       <span><i class="dot" id="h-unoq"></i>UNO Q</span>
       <span><i class="dot" id="h-ollama"></i>GEMMA</span>
       <span><i class="dot" id="h-mic"></i>MIC</span>
-      <div id="miclevel"><div id="mic-bar"></div><div id="mic-thr"></div></div>
+      <div id="miclevel"><div id="mic-bar"></div></div>
     </div>
   </div>
 
@@ -150,10 +149,9 @@
         break;
       case "name": $("name").textContent = ev.name; break;
       case "mic": {
-        const max = Math.max(ev.threshold * 4, ev.rms, 0.001);
+        const max = Math.max(ev.rms, 0.02);
         $("mic-bar").style.width = Math.min(100, ev.rms / max * 100) + "%";
-        $("mic-bar").style.background = ev.rms > ev.threshold ? "var(--red)" : "var(--green)";
-        $("mic-thr").style.left = (ev.threshold / max * 100) + "%";
+        $("mic-bar").style.background = ev.recording ? "var(--red)" : "var(--green)";
         break;
       }
       case "angry":

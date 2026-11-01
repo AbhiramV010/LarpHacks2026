@@ -1,10 +1,8 @@
-"""The duck's state machine. Always listening. Hotkeys: F8 reset, F10 kill switch. Button D12 = reset."""
+"""The duck's state machine. Hold SPACE to talk, release to send. Hotkeys: F8 reset, F10 kill switch. Button D12 = reset."""
 import asyncio
-import difflib
 import json
 import logging
 import queue
-import subprocess
 import threading
 import time
 
@@ -34,17 +32,6 @@ def tier_for(pot):
         if pot <= row[0]:
             return row
     return TIERS[-1]
-
-
-def strip_wake_word(text, wake):
-    """Return the text after the wake word, or None if it isn't there (fuzzy)."""
-    words = text.split()
-    if len(words) < 2:
-        return None
-    head = " ".join(w.lower().strip(".,!?") for w in words[:2])
-    if head in ("a duck", "hey duc", "a duc") or difflib.SequenceMatcher(None, head, wake).ratio() >= 0.7:
-        return " ".join(words[2:]).strip() or None
-    return None
 
 
 class Overlay:
@@ -93,10 +80,10 @@ class Duck:
         self.speaking = False        # duck audio is playing
         self.mute_until = 0.0        # self-hearing guard end time
         self.work = queue.Queue()    # reset requests from F8 / button, drained by the main loop
-        self.space_down = False
+        self.key_down = False
         self.busy = threading.Lock()
         self.stt = STT()
-        self.listener = Listener(self.muted, self.on_level)
+        self.listener = Listener(self.on_level)
         self.brain.warm()
         self.reset()
 
@@ -115,8 +102,8 @@ class Duck:
         self.overlay.send("state", state=name)
         log.info("STATE %s", name.upper())
 
-    def on_level(self, rms, threshold):
-        self.overlay.send("mic", rms=round(rms, 4), threshold=round(threshold, 4))
+    def on_level(self, rms, recording):
+        self.overlay.send("mic", rms=round(rms, 4), recording=recording)
 
     def send_dial(self):
         _, tier, price, roast, _, _ = tier_for(self.pot)
@@ -143,7 +130,6 @@ class Duck:
         self.send_dial()
         self.send_patience()
         self.overlay.send("burn", amount=round(self.burn, 2))
-        self.listener.recalibrate()
         self._end_audio()
 
     def kill(self):
@@ -157,8 +143,6 @@ class Duck:
         """Runs in a worker thread. The transcript goes straight to Gemma; the code is typed into Notepad."""
         self.set_state("translating")
         text = self.stt.transcribe(audio)
-        if config.WAKE_WORD:
-            text = strip_wake_word(text, config.WAKE_WORD) or ""
         log.info("Heard: %s", text)
         if not text:
             self.set_state("idle")
@@ -178,14 +162,6 @@ class Duck:
             time.sleep(1.0)
         if self.state in ("typing", "waiting"):
             self.set_state("idle")
-
-    def speak(self, line):
-        self.speaking = True
-        try:
-            self.tts.say(line)
-        finally:
-            self.speaking = False
-            self._end_audio()
 
     def _guarded(self, audio):
         if self.busy.acquire(blocking=False):
@@ -214,21 +190,21 @@ class Duck:
                 self.work.put("reset")
             elif k == keyboard.Key.f10:
                 self.kill()
-            elif k == keyboard.Key.space and not self.space_down and self.state == "idle" and not self.muted():
-                self.space_down = True
+            elif k == keyboard.Key.space and not self.key_down and self.state == "idle" and not self.muted():
+                self.key_down = True
                 self.listener.ptt_press()
                 self.set_state("listening")
 
         def on_release(k):
-            if k == keyboard.Key.space and self.space_down:
-                self.space_down = False
+            if k == keyboard.Key.space and self.key_down:
+                self.key_down = False
                 self.listener.ptt_release()
         keyboard.Listener(on_press=on_press, on_release=on_release).start()
 
     def run(self):
         self.hotkeys()
         self.listener.start()
-        log.info("%s ready. Just talk. F8 = reset, F10 = kill.", config.DUCK_NAME)
+        log.info("%s ready. Hold SPACE to talk. F8 = reset, F10 = kill.", config.DUCK_NAME)
         last_health = 0
         while True:
             try:
@@ -246,9 +222,7 @@ class Duck:
                 kind, audio = self.listener.events.get(timeout=0.05)
             except queue.Empty:
                 kind = None
-            if kind == "start" and self.state == "idle":
-                self.set_state("listening")
-            elif kind == "cancel" and self.state == "listening":
+            if kind == "cancel" and self.state == "listening":
                 self.set_state("idle")
             elif kind == "audio" and self.state == "listening":
                 threading.Thread(target=self._guarded, args=(audio,), daemon=True).start()

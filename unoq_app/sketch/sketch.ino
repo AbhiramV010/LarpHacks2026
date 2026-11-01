@@ -92,7 +92,10 @@ void anger() {
   setOled("SUPPORT", "REVOKED");
   moveTo(90, 12);
   for (int i = 0; i <= 255; i += 5) { setEyes(i); delay(10); }  // ~500 ms ramp
-  for (int i = 0; i < 5; i++) { moveTo(70, 15); moveTo(110, 15); }
+  for (int i = 0; i < 5; i++) {  // sword shake, LED flips off/red on each swing
+    moveTo(70, 15); rgb(0, 0, 0);
+    moveTo(110, 15); rgb(255, 0, 0);
+  }
   moveTo(90, 15);
   setEyes(255);
 }
