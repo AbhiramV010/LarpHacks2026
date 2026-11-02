@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import queue
+import re
 import threading
 import time
 
@@ -27,11 +28,31 @@ BURN = {"LOW": 0.0, "MEDIUM": 0.37, "HIGH": 4.20}
 SELF_HEAR_GUARD_S = 0.5
 
 
+API_KEY = re.compile(r"\bapi\s*keys?\b", re.I)
+
+
+def reckless_reason(text):
+    """Rule-based check, no model: any mention of an API key. Returns a reason or None."""
+    if API_KEY.search(text):
+        return "irresponsible decision"
+    return None
+
+
 def tier_for(pot):
     for row in TIERS:
         if pot <= row[0]:
             return row
     return TIERS[-1]
+
+
+def open_board():
+    """USB serial to the Uno Q's standalone sketch. None if the board isn't plugged in."""
+    try:
+        import serial
+        return serial.Serial(config.BOARD_SERIAL_PORT, 115200, timeout=0)
+    except Exception as e:
+        log.warning("Board serial not available (%s); no board anger", e)
+        return None
 
 
 class Overlay:
@@ -83,6 +104,7 @@ class Duck:
         self.key_down = False
         self.busy = threading.Lock()
         self.stt = STT()
+        self.board = open_board()
         self.listener = Listener(self.on_level)
         self.brain.warm()
         self.reset()
@@ -124,6 +146,7 @@ class Duck:
         self.total_blunder = 0
         self.locked = tier_for(self.pot)
         self.link.send("RESET")
+        self.send_board(b"r")
         self.overlay.send("reset")
         self.overlay.send("name", name=config.DUCK_NAME)
         self.set_state("idle")
@@ -139,6 +162,32 @@ class Duck:
         self._end_audio()
 
     # ---- pipeline ----
+    def speak(self, line):
+        self.speaking = True
+        try:
+            self.tts.say(line)
+        finally:
+            self.speaking = False
+            self._end_audio()
+
+    def send_board(self, data):
+        if self.board:
+            try:
+                self.board.write(data)
+            except Exception as e:
+                log.warning("Board write failed: %s", e)
+
+    def get_angry(self, reason):
+        """Refuse, glare, shake the sword, and speak an angry line. Stays angry until reset."""
+        _, tier, price, roast, _, _ = self.locked
+        self.set_state("angry")
+        self.link.send("ANGER")
+        self.send_board(b"a")  # standalone sketch: 'a' runs the anger sequence
+        self.overlay.send("angry", reason=reason)
+        line = self.brain.angry_line(reason, roast, tier, price)
+        self.overlay.send("say", text=line)
+        self.speak(line)
+
     def process(self, audio):
         """Runs in a worker thread. The transcript goes straight to Gemma; the code is typed into Notepad."""
         self.set_state("translating")
@@ -148,16 +197,23 @@ class Duck:
             self.set_state("idle")
             return
         self.overlay.send("heard", text=text)
-        existing = notepad.read_current()  # what's in Notepad now, so Gemma can edit it
-        code = self.brain.code(text, existing)
+        reason = reckless_reason(text)
+        if reason:
+            self.get_angry(reason)
+            return
+        threading.Thread(target=self.speak, args=("On it.",), daemon=True).start()  # ack while Gemma works
+        code, say = self.brain.code(text)  # transcript straight to Gemma, no prompt rewrite
         self.overlay.send("prompt", text=code[:2000])
+        self.overlay.send("say", text=say)
+        threading.Thread(target=self.speak, args=(say,), daemon=True).start()  # Gemma speaks back
         notepad.open_and_focus()
         time.sleep(1.5)  # let Notepad take focus
-        notepad.select_all()  # the typed file replaces whatever is there
+        notepad.select_all()  # the typed code replaces whatever is there
         self.set_state("typing")
         done = typer.type_prompt(code, on_typing=lambda on: self.link.send(f"TYPING {int(on)}"), code=True)
         self._end_audio()
         if done:
+            threading.Thread(target=self.speak, args=("Done.",), daemon=True).start()
             self.set_state("waiting")
             time.sleep(1.0)
         if self.state in ("typing", "waiting"):

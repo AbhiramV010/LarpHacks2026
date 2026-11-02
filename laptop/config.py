@@ -11,6 +11,7 @@ WHISPER_MODEL = "base.en"
 ELEVENLABS_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"   # "George"; swap for any voice id
 ELEVENLABS_MODEL = "eleven_flash_v2_5"
 DUCK_NAME = "QUACK OVERFLOW"
+BOARD_SERIAL_PORT = "COM3"       # Uno Q USB serial; standalone sketch gets 'a' = anger, 'r' = reset
 HOLD_KEY = "space"               # hold to talk; release to send
 SUBMIT = True                  # press Enter after typing the prompt
 TYPE_DELAY_S = 0.015

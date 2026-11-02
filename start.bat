@@ -3,7 +3,7 @@ rem One debug window runs everything. Enter opens the overlay, then this window 
 title Duck debug
 cd /d "%~dp0"
 
-echo Starting Ollama and the overlay server in the background...
+echo Starting sys and the overlay server in the background...
 tasklist /fi "imagename eq ollama app.exe" | find /i "ollama" >nul
 if errorlevel 1 (
     tasklist /fi "imagename eq ollama.exe" | find /i "ollama" >nul

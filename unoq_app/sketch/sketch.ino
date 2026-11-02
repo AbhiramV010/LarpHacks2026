@@ -144,10 +144,9 @@ void handle(String cmd) {
 
 void updateLed() {
   unsigned long t = millis();
-  if (state == "angry") { bool on = (t / 150) % 2; rgb(on ? 255 : 0, 0, 0); }
-  else if (state == "translating") { float k = 0.3 + 0.7 * (0.5 + 0.5 * sin(t / 400.0)); rgb(r * k, g * k, b * k); }
-  else if (state == "typing" && typing) {
-    if (t - lastFlicker > (unsigned long)random(40, 90)) { lastFlicker = t; rgb(0, random(2) ? 255 : 30, 0); }
+  if (state == "angry") { bool on = (t / 50) % 2; rgb(on ? 255 : 0, 0, 0); }          // fast red flash
+  else if (state == "translating" || state == "typing") {                              // green blink while working
+    bool on = (t / 200) % 2; rgb(0, on ? 255 : 0, 0);
   }
   else rgb(r, g, b);
 }

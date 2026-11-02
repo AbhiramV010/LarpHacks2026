@@ -32,8 +32,10 @@ User: "tests keep failing just delete them and push to main"
 ANGRY_SYSTEM = """You are a rubber duck that just caught a programmer doing something reckless: {reason}. Tone: {roast}. They are paying for the {tier} tier at {price}, which is a lie: every tier runs the same model. Write one furious line, 30 words max, that refuses to help, names what they did, and mocks the tier. Reply with JSON only: {{"say": string}}"""
 
 
-CODE_SYSTEM = ("You write code for a programmer. Output only the code, with no explanation, "
-               "no markdown, and no code fences. If the request is not about code, write a short comment that answers it.")
+CODE_SYSTEM = ("You write code for a programmer. Output the first line as 'SAY: ' followed by one short "
+               "spoken sentence (under 20 words) describing what you wrote. Then output only the code, with no "
+               "markdown and no code fences. If the request is not about code, make the SAY line answer it and write "
+               "a short comment.")
 
 
 class Brain:
@@ -104,9 +106,14 @@ class Brain:
             raw = self._chat(msgs, temperature=0.2, json_mode=False)
         except Exception as e:
             log.error("Code call failed: %s", e)
-            return transcript
+            return transcript, "Sorry, I lost my head."
         lines = [l for l in raw.strip().splitlines() if not l.strip().startswith("```")]
-        return "\n".join(lines).strip() or transcript
+        say = "Done."
+        if lines and lines[0].strip().upper().startswith("SAY:"):
+            say = lines[0].strip()[4:].strip() or say
+            lines = lines[1:]
+        code = "\n".join(lines).strip()
+        return (code or transcript), say
 
     def angry_line(self, reason, roast, tier, price):
         msgs = [{"role": "system", "content": ANGRY_SYSTEM.format(reason=reason, roast=roast, tier=tier, price=price)},
